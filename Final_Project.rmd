@@ -1,0 +1,342 @@
+---
+title: "IST 687 Final Project Airline Customer satisfaction"
+author: "Mihir Deshpande"
+date: "October 19, 2020"
+output: html_document
+---
+
+
+### Load The data
+
+```{r}
+library(tidyverse)
+library(caret)
+library(arules)
+library(arulesViz)
+airlines<-read.csv('spring19survey.csv')
+```
+```{r}
+library(caret)
+library(doParallel)
+
+```
+
+
+## Summary and structure 
+
+```{r}
+summary(airlines)
+```
+
+```{r}
+str(airlines)
+```
+
+
+#### Format the label
+
+```{r}
+airlines$Satisfaction<-as.factor(airlines$Satisfaction)
+airlines$Long.Duration.Trip<-ifelse(airlines$Long.Duration.Trip=='TRUE',1,0)
+
+```
+
+
+### Missing Values 
+
+```{r}
+#Looking for missing values 
+sapply(airlines,function(x)  sum(is.na(x)))
+```
+
+Missing Values are dealt with mean imputation
+
+```{r}
+#Dealing with missing values
+
+airlines[is.na(airlines$Flight.time.in.minutes),]$Flight.time.in.minutes<-mean(airlines$Flight.time.in.minutes,na.rm = TRUE)
+airlines[is.na(airlines$Departure.Delay.in.Minutes),]$Departure.Delay.in.Minutes<-mean(airlines$Departure.Delay.in.Minutes,na.rm = TRUE)
+airlines[is.na(airlines$Arrival.Delay.in.Minutes),]$Arrival.Delay.in.Minutes<-mean(airlines$Arrival.Delay.in.Minutes,na.rm = TRUE)
+airlines<-airlines[!is.na(airlines$Satisfaction),]
+```
+
+
+### Descriptive statistiics 
+
+```{r}
+table(airlines$Satisfaction)
+```
+
+
+
+```{r}
+mean(airlines$Age)
+hist(airlines$Age)
+```
+
+
+```{r}
+mean(airlines$Eating.and.Drinking.at.Airport)
+hist(airlines$Eating.and.Drinking.at.Airport)
+```
+
+
+```{r}
+
+mean(airlines$Flight.time.in.minutes)
+hist(airlines$Flight.time.in.minutes)
+
+```
+
+
+
+```{r}
+mean(airlines$Shopping.Amount.at.Airport)
+hist(airlines$Shopping.Amount.at.Airport)
+```
+
+
+```{r}
+mean(airlines$Departure.Delay.in.Minutes)
+hist(airlines$Departure.Delay.in.Minutes)
+
+```
+
+
+
+```{r}
+mean(airlines$Price.Sensitivity)
+hist(airlines$Price.Sensitivity)
+```
+
+
+
+```{r}
+mean(airlines$Arrival.Delay.in.Minutes)
+
+hist(airlines$Arrival.Delay.in.Minutes)
+```
+
+
+
+```{r}
+mean(airlines$Loyalty)
+hist(airlines$Loyalty)
+```
+
+
+```{r}
+mean(airlines$Flight.Distance)
+hist(airlines$Flight.Distance)
+```
+
+
+
+```{r}
+#Separate data set or cheapseats
+#made two,one for association rules and the other for modelling
+
+
+cheapseats<-airlines[airlines$Partner.Name=="Cheapseats Airlines Inc.",]
+dim(cheapseats)
+
+cheapseats1<-airlines[airlines$Partner.Name=="Cheapseats Airlines Inc.",]
+```
+
+
+### Exploratory data analysis 
+
+```{r}
+
+#Gender
+by_gen<-cheapseats%>%group_by(Satisfaction,Gender)%>%summarise(count=n())
+ggplot(data = by_gen,aes(x=Satisfaction,y=count,fill=Gender))+geom_bar(stat ='identity')+ggtitle("Satisfaction V/s Gender")
+
+```
+
+
+```{r}
+#Age
+ggplot(data=cheapseats,aes(x=Satisfaction,y=Age))+geom_boxplot()
+
+```
+
+
+```{r}
+#Class
+by_class<-cheapseats%>%group_by(Satisfaction,Class)%>%summarise(count=n())
+ggplot(data = by_class,aes(x=Satisfaction,y=count,fill=Class))+geom_bar(stat ='identity')
+
+```
+
+
+
+```{r}
+#Type of travel
+by_type<-cheapseats%>%group_by(Satisfaction,Type.of.Travel)%>%summarise(count=n())
+ggplot(data = by_type,aes(x=Satisfaction,y=count,fill=Type.of.Travel))+geom_bar(stat ='identity')
+
+```
+
+
+```{r}
+by_stat<-cheapseats%>%group_by(Satisfaction,Airline.Status)%>%summarise(count=n())
+ggplot(data = by_stat,aes(x=Satisfaction,y=count,fill=Airline.Status))+geom_bar(stat ='identity')
+```
+
+
+```{r}
+by_dep<-cheapseats%>%group_by(Satisfaction,Departure.Delay.in.Minutes)%>%summarise(count=n())
+ggplot(data = by_dep,aes(x=Satisfaction,y=count,fill=Departure.Delay.in.Minutes))+geom_bar(stat ='identity')
+
+```
+
+
+
+### Association Rule Mining 
+
+
+```{r}
+
+#dicretization of the numeric attributes 
+
+cheapseats$Flight.time.in.minutes<-discretize(cheapseats$Flight.time.in.minutes,method = "frequency",breaks=5,labels = c("Very Short","Short","Average","Long","Very Long"),order=T)
+cheapseats$Flight.Distance<-discretize(cheapseats$Flight.Distance,method = "frequency",breaks=5,labels = c("Very Short","Short","Average","Long","Very Long"),order=T)
+cheapseats$Flights.Per.Year<-discretize(cheapseats$Flights.Per.Year,method = "frequency",breaks=3,labels = c("Low","Average","High"),order=T)
+
+cheapseats$Eating.and.Drinking.at.Airport<-discretize(cheapseats$Eating.and.Drinking.at.Airport,method = "frequency",breaks=5,labels = c("Very Low","Low","Average","High","Very High"),order=T)
+cheapseats$Arrival.Delay.in.Minutes<-cut(cheapseats$Arrival.Delay.in.Minutes,c(-Inf,0,25,Inf),labels=c("Zero","Below_25","Above_25"))
+cheapseats$Scheduled.Departure.Hour<-discretize(cheapseats$Scheduled.Departure.Hour,method = "frequency",breaks=3,labels = c("Low","Average","High"),order=T)
+cheapseats$Age<-discretize(cheapseats$Age,method = "frequency",breaks=3,labels = c("Younger","Middle","Elder"),order=T)
+
+cheapseats$Departure.Delay.in.Minutes<-cut(cheapseats$Departure.Delay.in.Minutes,c(-Inf,0,25,Inf),labels=c("Zero","Below_25","Above_25"))
+cheapseats$Shopping.Amount.at.Airport<-cut(cheapseats$Shopping.Amount.at.Airport,c(-Inf,0,50,Inf),labels=c("Zero","Below_50","Above_50"))
+
+cheapseats$Total.Freq.Flyer.Accts<-cut(cheapseats$Total.Freq.Flyer.Accts,c(-Inf,0,5,Inf),labels=c("Zero","Below_5","Above_5"))
+cheapseats$Price.Sensitivity<-cut(cheapseats$Price.Sensitivity,c(-Inf,0,1,5),labels=c("Zero","One","Above_one"))
+
+cheapseats$Loyalty<-cut(cheapseats$Loyalty,c(-Inf,-0.428,1,Inf),labels=c("Low","Medium","High"))
+
+cheapseats$Long.Duration.Trip<-ifelse(cheapseats$Long.Duration.Trip==0,"No","Yes")
+
+cheapseats$Year.of.First.Flight<-cut(cheapseats$Year.of.First.Flight,c(-Inf,2006,2009,Inf),labels=c("Before 2006","Before 2009","After 2009"))
+
+cheapseats$Satisfaction<-as.numeric(cheapseats$Satisfaction)
+
+cheapseats$Satisfaction<-cut(cheapseats$Satisfaction,c(0,2,4,Inf),labels=c("Low","Average","High"))
+
+cheapseats<-cheapseats[,!names(cheapseats) %in% c("Day.of.Month","Partner.Name","Partner.Code","Destination.State","Destination.City","Origin.State","Orgin.City","Flight.date")]
+cheapseats$Long.Duration.Trip<-as.factor(cheapseats$Long.Duration.Trip)
+
+#converting into transactional dataset
+cheapseats_trans<-as(cheapseats,"transactions")
+
+itemFrequency(cheapseats_trans)
+itemFrequencyPlot(cheapseats_trans)
+
+
+#subset rules function
+subset_rules<-function(Rules){
+  #Removing redundant rules
+  sub_rules <- which(colSums(is.subset(Rules,Rules)) > 1)
+  Rules <- sort(Rules[-sub_rules], by = "lift", descreasing = T)
+  return(Rules)
+  
+}
+
+```
+
+
+```{r}
+#Rules to predict low satisfaction
+
+
+lowsat_rules<-apriori(cheapseats_trans,parameter = list(support = 0.05, confidence = 0.7,maxlen=6),appearance = list(default="lhs",rhs="Satisfaction=Low"))
+
+lowsat_rules<-subset_rules(lowsat_rules)
+inspect(lowsat_rules)
+plot(lowsat_rules)
+plot(lowsat_rules,method="graph")
+
+```
+
+
+
+```{r}
+#High satisfaction rules
+high_sat_rules<-apriori(cheapseats_trans,parameter = list(support = 0.05, confidence = 0.7,maxlen=6),appearance = list(default="lhs",rhs="Satisfaction=High"))
+high_sat_rules<-subset_rules(high_sat_rules)
+
+inspect(high_sat_rules[1:10])
+plot(high_sat_rules)
+plot(high_sat_rules[1:10],method='graph')
+```
+
+
+### SVM and Random Forest model 
+
+```{r}
+##Pre-processing
+cheapseats1$Satisfaction<-as.numeric(cheapseats1$Satisfaction)
+cheapseats1$Satisfaction<-cut(cheapseats1$Satisfaction,c(0,2,4,Inf),labels=c("Low","Average","High"))
+
+cheapseats1<-cheapseats1[,!names(cheapseats1) %in% c("Day.of.Month","Partner.Name","Partner.Code","Destination.State","Destination.City","Origin.State","Orgin.City","Flight.date","Year.of.First.Flight")]
+
+cheapseats1$Satisfaction<-as.character(cheapseats1$Satisfaction)
+cheapseats1$Satisfaction<-as.factor(cheapseats1$Satisfaction)
+
+
+```
+
+
+
+```{r}
+#split the data into training and testing
+index<-createDataPartition(cheapseats1$Satisfaction,p=0.7,list=FALSE)
+index<-sample(index)
+
+
+cs_train<-cheapseats1[index,]
+cs_test<-cheapseats1[-index,]
+levels(cs_test$Satisfaction)<-c("Average","High","Low")
+
+```
+
+
+```{r}
+#SVM 
+#Load trained Model
+model_svm<-readRDS("svm_model.rds")
+#make preditions
+svm_pred<-predict(model_svm,cs_test)
+```
+
+
+```{r}
+#Confusion Matrix
+confusionMatrix(svm_pred,cs_test$Satisfaction)
+```
+
+Random Forest Model
+```{r}
+model_rf<-readRDS("rf_model.rds")
+rf_pred<-predict(model_rf,cs_test)
+```
+
+Confusion Matrix 
+
+```{r}
+
+confusionMatrix(rf_pred,cs_test$Satisfaction)
+```
+
+# Variable importance 
+
+This gives us top features affecting customer satifaction
+
+```{r}
+variable_imp<-varImp(model_rf)
+plot(variable_imp)
+
+```
+
